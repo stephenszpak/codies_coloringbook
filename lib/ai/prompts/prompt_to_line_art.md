@@ -1,0 +1,1 @@
+Create a kid-safe coloring-book page of: {userPrompt}. Black outlines only, no color, no shading, pure white background, medium-thick continuous lines, closed regions suitable for toddlers to color. Keep composition centered (5–8 main shapes).

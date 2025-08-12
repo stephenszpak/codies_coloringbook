@@ -1,0 +1,1 @@
+Convert this photo into a clean black-and-white coloring-book page for a 4-year-old. Strong, continuous outlines, no shading, no gray fills, pure white background. Close all regions so tap-to-fill won't leak. Emphasize recognizable shapes; simplify noisy textures. Line thickness: {outlineStrength}/100 (thin→thick).
