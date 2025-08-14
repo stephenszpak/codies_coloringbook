@@ -5,7 +5,13 @@ import 'package:image/image.dart' as img;
 import '../data/coloring_page.dart';
 
 class FloodFillService {
-  static const int _lineThreshold = 50;
+  static const int _lineThreshold = 10; // Allow slight antialiasing but treat near-black as walls
+  
+  static bool _isWall(img.Image lineLayer, int x, int y) {
+    if (x < 0 || x >= lineLayer.width || y < 0 || y >= lineLayer.height) return true;
+    final v = lineLayer.getPixel(x, y).r.toInt(); // 0..255
+    return v <= _lineThreshold; // black line blocks fill (0 = pure black line)
+  }
   
   static Uint8List? floodFill({
     required Uint8List colorLayerBytes,
@@ -17,16 +23,26 @@ class FloodFillService {
     required int imageHeight,
   }) {
     try {
+      print('🎯 FloodFill: Decoding images...');
       img.Image? colorLayer = img.decodeImage(colorLayerBytes);
       img.Image? outlineImage = img.decodeImage(outlineBytes);
       
-      if (colorLayer == null || outlineImage == null) return null;
+      if (colorLayer == null || outlineImage == null) {
+        print('❌ FloodFill: Failed to decode images - colorLayer: $colorLayer, outlineImage: $outlineImage');
+        return null;
+      }
       
-      if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) return null;
+      print('✅ FloodFill: Images decoded successfully - ${colorLayer.width}x${colorLayer.height}');
       
-      final outlinePixel = outlineImage.getPixel(x, y);
-      final outlineLuminance = img.getLuminance(outlinePixel);
-      if (outlineLuminance <= _lineThreshold) return null;
+      if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) {
+        print('❌ FloodFill: Coordinates out of bounds - ($x, $y) not in ${imageWidth}x$imageHeight');
+        return null;
+      }
+      
+      if (_isWall(outlineImage, x, y)) {
+        print('❌ FloodFill: Clicked on wall/line at ($x, $y)');
+        return null;
+      }
       
       final targetPixel = colorLayer.getPixel(x, y);
       final newColor = img.ColorRgba8(
@@ -36,12 +52,21 @@ class FloodFillService {
         fillColor.alpha,
       );
       
-      if (_colorsEqual(targetPixel, newColor)) return null;
+      print('🎨 FloodFill: Target pixel: ${targetPixel.r},${targetPixel.g},${targetPixel.b},${targetPixel.a}');
+      print('🎨 FloodFill: Fill color: ${fillColor.red},${fillColor.green},${fillColor.blue},${fillColor.alpha}');
       
+      if (_colorsEqual(targetPixel, newColor)) {
+        print('❌ FloodFill: Target and fill colors are the same, no change needed');
+        return null;
+      }
+      
+      print('🚀 FloodFill: Starting scanline fill...');
       _scanlineFill(colorLayer, outlineImage, x, y, targetPixel, newColor);
       
+      print('✅ FloodFill: Encoding result...');
       return Uint8List.fromList(img.encodePng(colorLayer));
     } catch (e) {
+      print('💥 FloodFill: Error - ${e.toString()}');
       return null;
     }
   }
@@ -66,18 +91,14 @@ class FloodFillService {
         continue;
       }
       
-      final outlinePixel = outlineImage.getPixel(x, y);
-      final outlineLuminance = img.getLuminance(outlinePixel);
-      if (outlineLuminance <= _lineThreshold) continue;
+      if (_isWall(outlineImage, x, y)) continue;
       
       final currentPixel = colorLayer.getPixel(x, y);
       if (!_colorsEqual(currentPixel, targetColor)) continue;
       
       int x1 = x;
       while (x1 >= 0) {
-        final outlineCheck = outlineImage.getPixel(x1, y);
-        final outlineCheckLuminance = img.getLuminance(outlineCheck);
-        if (outlineCheckLuminance <= _lineThreshold) break;
+        if (_isWall(outlineImage, x1, y)) break;
         
         final colorCheck = colorLayer.getPixel(x1, y);
         if (!_colorsEqual(colorCheck, targetColor)) break;
@@ -88,9 +109,7 @@ class FloodFillService {
       
       int x2 = x;
       while (x2 < colorLayer.width) {
-        final outlineCheck = outlineImage.getPixel(x2, y);
-        final outlineCheckLuminance = img.getLuminance(outlineCheck);
-        if (outlineCheckLuminance <= _lineThreshold) break;
+        if (_isWall(outlineImage, x2, y)) break;
         
         final colorCheck = colorLayer.getPixel(x2, y);
         if (!_colorsEqual(colorCheck, targetColor)) break;
@@ -105,9 +124,7 @@ class FloodFillService {
       
       for (int i = x1; i <= x2; i++) {
         if (y > 0) {
-          final upOutlinePixel = outlineImage.getPixel(i, y - 1);
-          final upOutlineLuminance = img.getLuminance(upOutlinePixel);
-          if (upOutlineLuminance > _lineThreshold) {
+          if (!_isWall(outlineImage, i, y - 1)) {
             final upPixel = colorLayer.getPixel(i, y - 1);
             if (_colorsEqual(upPixel, targetColor)) {
               stack.add(Point(i, y - 1));
@@ -116,9 +133,7 @@ class FloodFillService {
         }
         
         if (y < colorLayer.height - 1) {
-          final downOutlinePixel = outlineImage.getPixel(i, y + 1);
-          final downOutlineLuminance = img.getLuminance(downOutlinePixel);
-          if (downOutlineLuminance > _lineThreshold) {
+          if (!_isWall(outlineImage, i, y + 1)) {
             final downPixel = colorLayer.getPixel(i, y + 1);
             if (_colorsEqual(downPixel, targetColor)) {
               stack.add(Point(i, y + 1));

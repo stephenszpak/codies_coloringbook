@@ -20,11 +20,21 @@ class PromptToPageNotifier extends StateNotifier<PromptToPageState> {
   }
 
   void setProcessing(bool processing) {
-    state = state.copyWith(isProcessing: processing);
+    state = state.copyWith(
+      isProcessing: processing,
+      progress: processing ? 0.1 : 0.0, // Start with small progress when processing
+    );
+  }
+
+  void setProgress(double progress) {
+    state = state.copyWith(progress: progress);
   }
 
   void setError(String? error) {
-    state = state.copyWith(errorMessage: error);
+    state = state.copyWith(
+      errorMessage: error,
+      progress: 0.0,
+    );
   }
 }
 
@@ -32,22 +42,26 @@ class PromptToPageState {
   final String prompt;
   final bool isProcessing;
   final String? errorMessage;
+  final double progress;
 
   const PromptToPageState({
     this.prompt = '',
     this.isProcessing = false,
     this.errorMessage,
+    this.progress = 0.0,
   });
 
   PromptToPageState copyWith({
     String? prompt,
     bool? isProcessing,
     String? errorMessage,
+    double? progress,
   }) {
     return PromptToPageState(
       prompt: prompt ?? this.prompt,
       isProcessing: isProcessing ?? this.isProcessing,
       errorMessage: errorMessage ?? this.errorMessage,
+      progress: progress ?? this.progress,
     );
   }
 }
@@ -147,10 +161,11 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
           },
         ),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               'Describe what you want to color',
@@ -164,7 +179,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
                 hintText: 'Type your idea here...',
                 border: OutlineInputBorder(),
               ),
-              maxLines: 3,
+              maxLines: 2,
               textCapitalization: TextCapitalization.sentences,
               onChanged: (value) {
                 ref.read(promptToPageProvider.notifier).setPrompt(value);
@@ -192,7 +207,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
               )).toList(),
             ),
             
-            const Spacer(),
+            const SizedBox(height: 24),
             
             if (state.errorMessage != null) ...[
               Container(
@@ -217,6 +232,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
                   ? () {} 
                   : _createFromPrompt,
               isEnabled: !state.isProcessing && state.prompt.trim().isNotEmpty,
+              progress: state.isProcessing ? state.progress : null,
             ),
             
             const SizedBox(height: 16),
@@ -256,19 +272,20 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
 
   Future<void> _createFromPrompt() async {
     final state = ref.read(promptToPageProvider);
-    final settings = ref.read(settingsProvider);
     final repository = ref.read(pagesRepositoryProvider);
     
-    if (state.prompt.trim().isEmpty || settings.apiKey.isEmpty) return;
+    if (state.prompt.trim().isEmpty) return;
 
     ref.read(promptToPageProvider.notifier).setProcessing(true);
     ref.read(promptToPageProvider.notifier).setError(null);
 
     try {
+      // Progress: Starting AI generation
+      ref.read(promptToPageProvider.notifier).setProgress(0.2);
+      
       final backend = OpenAIBackend();
       final result = await backend.promptToLineArt(
         state.prompt.trim(),
-        settings.apiKey,
       );
 
       if (result.isFailure) {
@@ -277,10 +294,16 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
         return;
       }
 
+      // Progress: Image generated, processing
+      ref.read(promptToPageProvider.notifier).setProgress(0.6);
+
       final outlineBytes = result.dataOrNull!;
       final uuid = const Uuid();
       final pageId = uuid.v4();
       final appDir = await repository.getAppDirectory();
+      
+      // Progress: Saving files
+      ref.read(promptToPageProvider.notifier).setProgress(0.8);
       
       final outlineImagePath = '$appDir/outline_$pageId.png';
       await File(outlineImagePath).writeAsBytes(outlineBytes);
@@ -293,6 +316,9 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
       
       final thumbnailPath = '$appDir/thumb_$pageId.png';
       await File(thumbnailPath).writeAsBytes(outlineBytes);
+      
+      // Progress: Finalizing
+      ref.read(promptToPageProvider.notifier).setProgress(0.95);
       
       final coloringPage = ColoringPage(
         id: pageId,
@@ -307,6 +333,12 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> {
       
       final saveResult = await repository.savePage(coloringPage);
       if (saveResult.isSuccess) {
+        // Progress: Complete!
+        ref.read(promptToPageProvider.notifier).setProgress(1.0);
+        
+        // Small delay to show completion
+        await Future.delayed(const Duration(milliseconds: 300));
+        
         if (mounted) {
           Navigator.of(context).pushReplacementNamed(
             '/coloring',

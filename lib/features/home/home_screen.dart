@@ -67,7 +67,7 @@ class HomeScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             
             BigButton(
-              text: 'Coloring Page from Words',
+              text: 'Create your own coloring page!',
               icon: Icons.text_fields,
               onPressed: settings.openAIEnabled
                   ? () {

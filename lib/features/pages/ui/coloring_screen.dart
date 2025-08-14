@@ -341,13 +341,16 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
   }
 
   void _handleCanvasTap(Offset offset) {
+    print('🎨 Canvas tap detected at: $offset');
     final state = ref.read(coloringProvider(widget.pageId));
     final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.colorLayer == null || state.outlineLayer == null || state.page == null) {
+      print('❌ Missing required data - colorLayer: ${state.colorLayer}, outlineLayer: ${state.outlineLayer}, page: ${state.page}');
       return;
     }
 
+    print('✅ All required data present, selected color: ${state.selectedColor}');
     HapticsService.mediumTap();
 
     _performFloodFill(
@@ -360,19 +363,24 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
   }
 
   Future<void> _performFloodFill(int x, int y, Color fillColor) async {
+    print('🔥 Starting flood fill at ($x, $y) with color $fillColor');
     final state = ref.read(coloringProvider(widget.pageId));
     final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.page == null || state.colorLayer == null || state.outlineLayer == null) {
+      print('❌ Missing required data in flood fill');
       return;
     }
 
     try {
+      print('📁 Reading image files...');
       final colorBytes = await File(state.page!.workingImagePath).readAsBytes();
       final outlineBytes = await File(state.page!.outlineImagePath).readAsBytes();
+      print('✅ Image files loaded, color layer: ${colorBytes.length} bytes, outline: ${outlineBytes.length} bytes');
 
       final beforeBytes = Uint8List.fromList(colorBytes);
 
+      print('🎯 Calling FloodFillService with coordinates ($x, $y)...');
       final result = FloodFillService.floodFill(
         colorLayerBytes: colorBytes,
         outlineBytes: outlineBytes,
@@ -384,6 +392,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       );
 
       if (result != null) {
+        print('✅ Flood fill successful, writing result...');
         await File(state.page!.workingImagePath).writeAsBytes(result);
         
         final undoAction = FloodFillService.createUndoAction(
@@ -396,8 +405,12 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
 
         final newColorLayer = await decodeImageFromList(result);
         notifier.setImages(newColorLayer, state.outlineLayer);
+        print('🎨 Color layer updated successfully');
+      } else {
+        print('❌ FloodFillService returned null');
       }
     } catch (e) {
+      print('💥 Flood fill error: ${e.toString()}');
       notifier.setError('Failed to fill color: ${e.toString()}');
     }
   }

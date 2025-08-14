@@ -4,39 +4,92 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:image/image.dart' as img;
 import '../core/result.dart';
+import '../config/api_config.dart';
 
 class OpenAIBackend {
   static const String _baseUrl = 'https://api.openai.com/v1';
   final Dio _dio = Dio();
+  String? _cachedApiKey;
+
+  /// Get the API key from .env file
+  String? _getApiKey() {
+    _cachedApiKey ??= ApiConfig.getOpenAIApiKey();
+    return _cachedApiKey;
+  }
 
   Future<Result<Uint8List>> photoToLineArt(
     Uint8List imageBytes, 
-    int outlineStrength, 
-    String apiKey,
+    int outlineStrength,
   ) async {
     try {
-      final promptTemplate = await _loadPromptTemplate('photo_to_line_art');
-      final prompt = promptTemplate.replaceAll('{outlineStrength}', outlineStrength.toString());
+      final apiKey = _getApiKey();
+      if (apiKey == null || !ApiConfig.isValidApiKey(apiKey)) {
+        return const Failure('OpenAI API key not configured or invalid. Please check your .env file.');
+      }
 
-      final formData = FormData.fromMap({
-        'model': 'dall-e-3',
-        'prompt': prompt,
-        'image': MultipartFile.fromBytes(
-          imageBytes,
-          filename: 'image.png',
-          contentType: DioMediaType('image', 'png'),
-        ),
-        'size': '1024x1024',
-        'response_format': 'b64_json',
-      });
-
-      final response = await _dio.post(
-        '$_baseUrl/images/edits',
-        data: formData,
+      // For photo-to-line-art, we'll use GPT-4 Vision to describe the image,
+      // then use DALL-E 3 to generate a coloring page based on that description
+      
+      // First, convert image to base64 for vision API
+      final base64Image = base64.encode(imageBytes);
+      
+      // Use GPT-4 Vision to describe the image
+      final visionResponse = await _dio.post(
+        '$_baseUrl/chat/completions',
+        data: {
+          'model': 'gpt-4o-mini', // More cost-effective vision model
+          'messages': [
+            {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'text',
+                  'text': 'Describe this image in simple terms suitable for creating a coloring page for a 4-year-old. Focus on the main objects, animals, or people. Keep it to 1-2 sentences with basic shapes and recognizable elements.'
+                },
+                {
+                  'type': 'image_url',
+                  'image_url': {
+                    'url': 'data:image/png;base64,$base64Image'
+                  }
+                }
+              ]
+            }
+          ],
+          'max_tokens': 100
+        },
         options: Options(
           headers: {
             'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'multipart/form-data',
+            'Content-Type': 'application/json',
+          },
+        ),
+      );
+
+      if (visionResponse.statusCode != 200) {
+        return Failure('Vision API error: ${visionResponse.statusCode}');
+      }
+
+      final description = visionResponse.data['choices'][0]['message']['content'] as String;
+      
+      // Now use DALL-E 3 to create a coloring page based on the description
+      final promptTemplate = await _loadPromptTemplate('photo_to_line_art');
+      final prompt = promptTemplate
+          .replaceAll('{description}', description)
+          .replaceAll('{outlineStrength}', outlineStrength.toString());
+
+      final response = await _dio.post(
+        '$_baseUrl/images/generations',
+        data: {
+          'model': 'dall-e-3',
+          'prompt': prompt,
+          'n': 1,
+          'size': '1024x1024',
+          'response_format': 'b64_json',
+        },
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
           },
         ),
       );
@@ -62,10 +115,14 @@ class OpenAIBackend {
   }
 
   Future<Result<Uint8List>> promptToLineArt(
-    String userPrompt, 
-    String apiKey,
+    String userPrompt,
   ) async {
     try {
+      final apiKey = _getApiKey();
+      if (apiKey == null || !ApiConfig.isValidApiKey(apiKey)) {
+        return const Failure('OpenAI API key not configured or invalid. Please check your .env file.');
+      }
+
       final promptTemplate = await _loadPromptTemplate('prompt_to_line_art');
       final prompt = promptTemplate.replaceAll('{userPrompt}', userPrompt);
 
@@ -106,8 +163,13 @@ class OpenAIBackend {
     }
   }
 
-  Future<Result<void>> healthCheck(String apiKey) async {
+  Future<Result<void>> healthCheck() async {
     try {
+      final apiKey = _getApiKey();
+      if (apiKey == null || !ApiConfig.isValidApiKey(apiKey)) {
+        return const Failure('OpenAI API key not configured or invalid. Please check your .env file.');
+      }
+
       final response = await _dio.get(
         '$_baseUrl/models',
         options: Options(
@@ -140,11 +202,11 @@ class OpenAIBackend {
       } else {
         switch (templateName) {
           case 'photo_to_line_art':
-            return 'Convert this photo into a clean black-and-white coloring-book page for a 4-year-old. Strong, continuous outlines, no shading, no gray fills, pure white background. Close all regions so tap-to-fill won\'t leak. Emphasize recognizable shapes; simplify noisy textures. Line thickness: {outlineStrength}/100 (thin→thick).';
+            return 'Create a simple black and white coloring page based on this description: {description}. Perfect for a 4-year-old child. Use only bold black outlines on pure white background. Make all lines thick and continuous with completely closed regions for easy coloring. Simplify to basic recognizable shapes with 3-5 main elements. No details, no shading, no color, no text. Line thickness: medium to thick based on strength {outlineStrength}/100.';
           case 'prompt_to_line_art':
-            return 'Create a kid-safe coloring-book page of: {userPrompt}. Black outlines only, no color, no shading, pure white background, medium-thick continuous lines, closed regions suitable for toddlers to color. Keep composition centered (5–8 main shapes).';
+            return 'Create a simple black and white coloring page of: {userPrompt}. Perfect for a 4-year-old child. Use only bold black outlines on pure white background. Make 3-5 large simple shapes with thick continuous lines and completely closed regions. No details, no shading, no color, no text. Keep it very simple and easy to color with big areas.';
           default:
-            return 'Create a simple coloring book page.';
+            return 'Create a simple black and white coloring page with thick lines for a 4-year-old child.';
         }
       }
     } catch (e) {

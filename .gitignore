@@ -97,7 +97,9 @@ lcov.info
 # /coloring_pages/
 # /exports/
 
-# Environment files (for API keys - IMPORTANT!)
+# API Keys and Configuration (NEVER COMMIT!)
+assets/config.json
+assets/local_config.json
 .env
 .env.local
 .env.production
