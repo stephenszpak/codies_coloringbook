@@ -44,7 +44,7 @@ class OpenAIBackend {
               'content': [
                 {
                   'type': 'text',
-                  'text': 'Describe this image in simple terms suitable for creating a coloring page for a 4-year-old. Focus on the main objects, animals, or people. Keep it to 1-2 sentences with basic shapes and recognizable elements.'
+                  'text': 'Describe this image in complete detail for creating an accurate coloring page. Include all people, animals, objects, clothing, facial features, background elements, poses, expressions, and spatial relationships. Describe textures, patterns, and important details that should be preserved in the coloring page. Be thorough and specific about the entire scene composition, proportions, and layout.'
                 },
                 {
                   'type': 'image_url',
@@ -55,7 +55,7 @@ class OpenAIBackend {
               ]
             }
           ],
-          'max_tokens': 100
+          'max_tokens': 300
         },
         options: Options(
           headers: {
@@ -202,9 +202,9 @@ class OpenAIBackend {
       } else {
         switch (templateName) {
           case 'photo_to_line_art':
-            return 'Create a simple black and white coloring page based on this description: {description}. Perfect for a 4-year-old child. Use only bold black outlines on pure white background. Make all lines thick and continuous with completely closed regions for easy coloring. Simplify to basic recognizable shapes with 3-5 main elements. No details, no shading, no color, no text. Line thickness: medium to thick based on strength {outlineStrength}/100.';
+            return 'Create a detailed black and white coloring page that accurately recreates this photo: {description}. Preserve all important details, objects, people, animals, backgrounds, and proportions exactly as described. Convert to clean black outlines on pure white background with continuous, closed regions perfect for coloring. Include all elements from the original photo - faces, clothing details, background objects, textures, and spatial relationships. Make lines thick enough for easy coloring (thickness: {outlineStrength}/100 strength) but preserve the photo\'s composition and details. No color, no shading, no text - just accurate black line art of the complete scene.';
           case 'prompt_to_line_art':
-            return 'Create a simple black and white coloring page of: {userPrompt}. Perfect for a 4-year-old child. Use only bold black outlines on pure white background. Make 3-5 large simple shapes with thick continuous lines and completely closed regions. No details, no shading, no color, no text. Keep it very simple and easy to color with big areas.';
+            return 'Create a simple black and white coloring page featuring ONLY a single {userPrompt}. Draw just one main subject - no background, no decorations, no additional objects, no patterns, no circles, no borders, no extra elements. Pure white background with only bold black outlines of the single requested subject. Make it large, simple, and centered with thick continuous lines and completely closed regions for easy coloring. No details, no shading, no color, no text - just the one requested subject as a clean line drawing.';
           default:
             return 'Create a simple black and white coloring page with thick lines for a 4-year-old child.';
         }

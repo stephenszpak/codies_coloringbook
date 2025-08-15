@@ -10,12 +10,15 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:image/image.dart' as img;
 import '../core/result.dart';
 import 'storage_service.dart';
+import '../features/pages/ui/widgets/canvas_painter.dart';
 
 class ExportService {
+  /// Exports the coloring page to PNG, including freehand strokes.
   static Future<Result<String>> exportToPNG(
     ui.Image colorLayer,
-    ui.Image outlineLayer,
-  ) async {
+    ui.Image outlineLayer, {
+    List<DrawStroke> strokes = const <DrawStroke>[],
+  }) async {
     try {
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
@@ -27,6 +30,22 @@ class ExportService {
           outlineLayer.height.toDouble());
       
       canvas.drawImageRect(colorLayer, rect, rect, paint);
+      // Draw freehand strokes beneath the outline
+      for (final stroke in strokes) {
+        final strokePaint = Paint()
+          ..color = stroke.color
+          ..strokeWidth = stroke.strokeWidth
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+        if (stroke.points.length < 2) {
+          canvas.drawPoints(ui.PointMode.points, stroke.points, strokePaint);
+        } else {
+          for (var i = 1; i < stroke.points.length; i++) {
+            canvas.drawLine(stroke.points[i - 1], stroke.points[i], strokePaint);
+          }
+        }
+      }
       canvas.drawImageRect(outlineLayer, rect, rect, paint);
       
       final picture = recorder.endRecording();
@@ -52,10 +71,12 @@ class ExportService {
     }
   }
 
+  /// Exports the coloring page to a PDF, including freehand strokes.
   static Future<Result<String>> exportToPDF(
     ui.Image colorLayer,
-    ui.Image outlineLayer,
-  ) async {
+    ui.Image outlineLayer, {
+    List<DrawStroke> strokes = const <DrawStroke>[],
+  }) async {
     try {
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
@@ -67,6 +88,22 @@ class ExportService {
           outlineLayer.height.toDouble());
       
       canvas.drawImageRect(colorLayer, rect, rect, paint);
+      // Draw freehand strokes beneath the outline
+      for (final stroke in strokes) {
+        final strokePaint = Paint()
+          ..color = stroke.color
+          ..strokeWidth = stroke.strokeWidth
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+        if (stroke.points.length < 2) {
+          canvas.drawPoints(ui.PointMode.points, stroke.points, strokePaint);
+        } else {
+          for (var i = 1; i < stroke.points.length; i++) {
+            canvas.drawLine(stroke.points[i - 1], stroke.points[i], strokePaint);
+          }
+        }
+      }
       canvas.drawImageRect(outlineLayer, rect, rect, paint);
       
       final picture = recorder.endRecording();

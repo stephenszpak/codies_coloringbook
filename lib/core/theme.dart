@@ -125,6 +125,7 @@ class AppTheme {
   static const List<Color> colorPalette = [
     Colors.black,
     Color(0xFFDC2626), // Red
+    Color(0xFFEC4899), // Pink
     Color(0xFF2563EB), // Blue  
     Color(0xFF16A34A), // Green
     Color(0xFFEAB308), // Yellow

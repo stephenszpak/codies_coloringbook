@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../pages/ui/widgets/big_button.dart';
 import '../../core/haptics.dart';
 import '../settings/settings_screen.dart';
+import '../../widgets/princess_castle_intro.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -35,26 +36,13 @@ class HomeScreen extends ConsumerWidget {
           children: [
             const Spacer(),
             
-            Icon(
-              Icons.palette,
-              size: 80,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Welcome to Coloring Book!',
-              style: theme.textTheme.displayMedium,
-              textAlign: TextAlign.center,
-            ),
-            Text(
-              'Turn photos into coloring pages',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.7),
-              ),
-              textAlign: TextAlign.center,
+            const Center(
+              child: PrincessCastleIntro(),
             ),
             
             const Spacer(),
+            
+            const SizedBox(height: 16),
             
             BigButton(
               text: 'New Coloring Page',

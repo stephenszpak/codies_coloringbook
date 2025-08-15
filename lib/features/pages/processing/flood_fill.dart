@@ -23,26 +23,14 @@ class FloodFillService {
     required int imageHeight,
   }) {
     try {
-      print('🎯 FloodFill: Decoding images...');
       img.Image? colorLayer = img.decodeImage(colorLayerBytes);
       img.Image? outlineImage = img.decodeImage(outlineBytes);
       
-      if (colorLayer == null || outlineImage == null) {
-        print('❌ FloodFill: Failed to decode images - colorLayer: $colorLayer, outlineImage: $outlineImage');
-        return null;
-      }
+      if (colorLayer == null || outlineImage == null) return null;
       
-      print('✅ FloodFill: Images decoded successfully - ${colorLayer.width}x${colorLayer.height}');
+      if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) return null;
       
-      if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) {
-        print('❌ FloodFill: Coordinates out of bounds - ($x, $y) not in ${imageWidth}x$imageHeight');
-        return null;
-      }
-      
-      if (_isWall(outlineImage, x, y)) {
-        print('❌ FloodFill: Clicked on wall/line at ($x, $y)');
-        return null;
-      }
+      if (_isWall(outlineImage, x, y)) return null;
       
       final targetPixel = colorLayer.getPixel(x, y);
       final newColor = img.ColorRgba8(
@@ -52,21 +40,12 @@ class FloodFillService {
         fillColor.alpha,
       );
       
-      print('🎨 FloodFill: Target pixel: ${targetPixel.r},${targetPixel.g},${targetPixel.b},${targetPixel.a}');
-      print('🎨 FloodFill: Fill color: ${fillColor.red},${fillColor.green},${fillColor.blue},${fillColor.alpha}');
+      if (_colorsEqual(targetPixel, newColor)) return null;
       
-      if (_colorsEqual(targetPixel, newColor)) {
-        print('❌ FloodFill: Target and fill colors are the same, no change needed');
-        return null;
-      }
-      
-      print('🚀 FloodFill: Starting scanline fill...');
       _scanlineFill(colorLayer, outlineImage, x, y, targetPixel, newColor);
       
-      print('✅ FloodFill: Encoding result...');
       return Uint8List.fromList(img.encodePng(colorLayer));
     } catch (e) {
-      print('💥 FloodFill: Error - ${e.toString()}');
       return null;
     }
   }

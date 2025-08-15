@@ -39,6 +39,35 @@ class ColoringNotifier extends StateNotifier<ColoringState> {
       isEraserSelected: selected,
     );
   }
+  /// Update the brush stroke width for freehand drawing.
+  void setBrushSize(double size) {
+    state = state.copyWith(brushSize: size);
+  }
+  /// Begin a new freehand stroke at the given image coordinate.
+  void startStroke(Offset point) {
+    final color = state.isEraserSelected ? Colors.transparent : state.selectedColor;
+    final stroke = DrawStroke(
+      points: [point],
+      color: color,
+      strokeWidth: state.brushSize,
+    );
+    state = state.copyWith(strokes: [...state.strokes, stroke]);
+  }
+
+  /// Continue the current freehand stroke by adding a new point.
+  void updateStroke(Offset point) {
+    if (state.strokes.isEmpty) return;
+    final updated = List<DrawStroke>.from(state.strokes);
+    final last = updated.removeLast();
+    final newPoints = List<Offset>.from(last.points)..add(point);
+    updated.add(DrawStroke(points: newPoints, color: last.color, strokeWidth: last.strokeWidth));
+    state = state.copyWith(strokes: updated);
+  }
+
+  /// End the current freehand stroke.
+  void endStroke() {
+    // No-op: strokes are retained in state.strokes
+  }
 
   void setLoading(bool loading) {
     state = state.copyWith(isLoading: loading);
@@ -103,6 +132,8 @@ class ColoringState {
   final List<UndoRedoAction> redoStack;
   final bool isLoading;
   final String? errorMessage;
+  final double brushSize;
+  final List<DrawStroke> strokes;
 
   const ColoringState({
     this.page,
@@ -114,6 +145,8 @@ class ColoringState {
     this.redoStack = const [],
     this.isLoading = false,
     this.errorMessage,
+    this.brushSize = 4.0,
+    this.strokes = const [],
   });
 
   ColoringState copyWith({
@@ -126,6 +159,8 @@ class ColoringState {
     List<UndoRedoAction>? redoStack,
     bool? isLoading,
     String? errorMessage,
+    double? brushSize,
+    List<DrawStroke>? strokes,
   }) {
     return ColoringState(
       page: page ?? this.page,
@@ -137,6 +172,8 @@ class ColoringState {
       redoStack: redoStack ?? this.redoStack,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage ?? this.errorMessage,
+      brushSize: brushSize ?? this.brushSize,
+      strokes: strokes ?? this.strokes,
     );
   }
 }
@@ -158,18 +195,29 @@ class ColoringScreen extends ConsumerStatefulWidget {
 }
 
 class _ColoringScreenState extends ConsumerState<ColoringScreen> {
+  late TransformationController _transformationController;
+  bool _isZoomMode = false; // Toggle between zoom and draw modes
+
   @override
   void initState() {
     super.initState();
+    _transformationController = TransformationController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadColoringPage();
     });
   }
 
   @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = ref.watch(coloringProvider(widget.pageId));
     final theme = Theme.of(context);
+    final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.isLoading) {
       return const Scaffold(
@@ -235,6 +283,33 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
         ),
         actions: [
           IconButton(
+            icon: Icon(_isZoomMode ? Icons.edit : Icons.zoom_in),
+            onPressed: () {
+              setState(() {
+                _isZoomMode = !_isZoomMode;
+              });
+              HapticsService.selectionClick();
+            },
+            tooltip: _isZoomMode ? 'Draw Mode' : 'Zoom Mode',
+          ),
+          if (_isZoomMode) ...[
+            IconButton(
+              icon: const Icon(Icons.zoom_in),
+              onPressed: _zoomIn,
+              tooltip: 'Zoom In',
+            ),
+            IconButton(
+              icon: const Icon(Icons.zoom_out),
+              onPressed: _zoomOut,
+              tooltip: 'Zoom Out',
+            ),
+            IconButton(
+              icon: const Icon(Icons.center_focus_strong),
+              onPressed: _resetZoom,
+              tooltip: 'Reset Zoom',
+            ),
+          ],
+          IconButton(
             icon: const Icon(Icons.undo),
             onPressed: state.undoStack.isNotEmpty ? _undo : null,
             tooltip: 'Undo',
@@ -286,24 +361,68 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
           Expanded(
             child: Container(
               color: Colors.white,
-              child: ColoringCanvas(
-                colorLayer: state.colorLayer,
-                outlineLayer: state.outlineLayer,
-                onTap: _handleCanvasTap,
-              ),
+              child: _isZoomMode
+                  ? InteractiveViewer(
+                      transformationController: _transformationController,
+                      minScale: 0.5,
+                      maxScale: 5.0,
+                      constrained: false,
+                      child: ColoringCanvas(
+                        colorLayer: state.colorLayer,
+                        outlineLayer: state.outlineLayer,
+                        strokes: state.strokes,
+                        onTap: _handleCanvasTap,
+                        onPanStart: null, // Disable drawing in zoom mode
+                        onPanUpdate: null,
+                        onPanEnd: null,
+                      ),
+                    )
+                  : ColoringCanvas(
+                      colorLayer: state.colorLayer,
+                      outlineLayer: state.outlineLayer,
+                      strokes: state.strokes,
+                      onTap: _handleCanvasTap,
+                      onPanStart: notifier.startStroke,
+                      onPanUpdate: notifier.updateStroke,
+                      onPanEnd: notifier.endStroke,
+                    ),
             ),
           ),
-          ColorPalette(
-            selectedColor: state.selectedColor,
-            onColorChanged: (color) {
-              HapticsService.selectionClick();
-              ref.read(coloringProvider(widget.pageId).notifier).setSelectedColor(color);
-            },
-            onEraserTapped: () {
-              HapticsService.selectionClick();
-              ref.read(coloringProvider(widget.pageId).notifier).setEraserSelected(true);
-            },
-            isEraserSelected: state.isEraserSelected,
+          // Brush size selector
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Text('Brush size:'),
+                Expanded(
+                  child: Slider(
+                    value: state.brushSize,
+                    min: 1.0,
+                    max: 20.0,
+                    divisions: 19,
+                    label: state.brushSize.round().toString(),
+                    onChanged: (value) {
+                      notifier.setBrushSize(value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: ColorPalette(
+              selectedColor: state.selectedColor,
+              onColorChanged: (color) {
+                HapticsService.selectionClick();
+                notifier.setSelectedColor(color);
+              },
+              onEraserTapped: () {
+                HapticsService.selectionClick();
+                notifier.setEraserSelected(true);
+              },
+              isEraserSelected: state.isEraserSelected,
+            ),
           ),
         ],
       ),
@@ -341,16 +460,12 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
   }
 
   void _handleCanvasTap(Offset offset) {
-    print('🎨 Canvas tap detected at: $offset');
     final state = ref.read(coloringProvider(widget.pageId));
-    final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.colorLayer == null || state.outlineLayer == null || state.page == null) {
-      print('❌ Missing required data - colorLayer: ${state.colorLayer}, outlineLayer: ${state.outlineLayer}, page: ${state.page}');
       return;
     }
 
-    print('✅ All required data present, selected color: ${state.selectedColor}');
     HapticsService.mediumTap();
 
     _performFloodFill(
@@ -363,24 +478,19 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
   }
 
   Future<void> _performFloodFill(int x, int y, Color fillColor) async {
-    print('🔥 Starting flood fill at ($x, $y) with color $fillColor');
     final state = ref.read(coloringProvider(widget.pageId));
     final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.page == null || state.colorLayer == null || state.outlineLayer == null) {
-      print('❌ Missing required data in flood fill');
       return;
     }
 
     try {
-      print('📁 Reading image files...');
       final colorBytes = await File(state.page!.workingImagePath).readAsBytes();
       final outlineBytes = await File(state.page!.outlineImagePath).readAsBytes();
-      print('✅ Image files loaded, color layer: ${colorBytes.length} bytes, outline: ${outlineBytes.length} bytes');
 
       final beforeBytes = Uint8List.fromList(colorBytes);
 
-      print('🎯 Calling FloodFillService with coordinates ($x, $y)...');
       final result = FloodFillService.floodFill(
         colorLayerBytes: colorBytes,
         outlineBytes: outlineBytes,
@@ -392,7 +502,6 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       );
 
       if (result != null) {
-        print('✅ Flood fill successful, writing result...');
         await File(state.page!.workingImagePath).writeAsBytes(result);
         
         final undoAction = FloodFillService.createUndoAction(
@@ -405,12 +514,8 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
 
         final newColorLayer = await decodeImageFromList(result);
         notifier.setImages(newColorLayer, state.outlineLayer);
-        print('🎨 Color layer updated successfully');
-      } else {
-        print('❌ FloodFillService returned null');
       }
     } catch (e) {
-      print('💥 Flood fill error: ${e.toString()}');
       notifier.setError('Failed to fill color: ${e.toString()}');
     }
   }
@@ -506,6 +611,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       final result = await ExportService.exportToPNG(
         state.colorLayer!,
         state.outlineLayer!,
+        strokes: state.strokes,
       );
 
       Navigator.of(context).pop(); // Close loading dialog
@@ -535,6 +641,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       final result = await ExportService.exportToPDF(
         state.colorLayer!,
         state.outlineLayer!,
+        strokes: state.strokes,
       );
 
       Navigator.of(context).pop(); // Close loading dialog
@@ -564,6 +671,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       final exportResult = await ExportService.exportToPNG(
         state.colorLayer!,
         state.outlineLayer!,
+        strokes: state.strokes,
       );
 
       Navigator.of(context).pop(); // Close loading dialog
@@ -619,5 +727,40 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
         backgroundColor: Colors.red,
       ),
     );
+  }
+
+  void _zoomIn() {
+    final currentTransform = _transformationController.value;
+    final currentScale = currentTransform.getMaxScaleOnAxis();
+    const zoomFactor = 1.2;
+    final newScale = (currentScale * zoomFactor).clamp(0.5, 5.0);
+    
+    final scaleChange = newScale / currentScale;
+    final newTransform = Matrix4.identity()
+      ..scale(scaleChange, scaleChange, 1.0)
+      ..multiply(currentTransform);
+    
+    _transformationController.value = newTransform;
+    HapticsService.lightTap();
+  }
+
+  void _zoomOut() {
+    final currentTransform = _transformationController.value;
+    final currentScale = currentTransform.getMaxScaleOnAxis();
+    const zoomFactor = 0.8;
+    final newScale = (currentScale * zoomFactor).clamp(0.5, 5.0);
+    
+    final scaleChange = newScale / currentScale;
+    final newTransform = Matrix4.identity()
+      ..scale(scaleChange, scaleChange, 1.0)
+      ..multiply(currentTransform);
+    
+    _transformationController.value = newTransform;
+    HapticsService.lightTap();
+  }
+
+  void _resetZoom() {
+    _transformationController.value = Matrix4.identity();
+    HapticsService.mediumTap();
   }
 }
