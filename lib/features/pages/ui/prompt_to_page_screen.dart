@@ -207,7 +207,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> with Wi
     if (!settings.openAIEnabled) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Words to Page'),
+          title: const Text('Create your own coloring page!'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () {
@@ -255,7 +255,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> with Wi
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Words to Page'),
+        title: const Text('Create your own coloring page!'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
@@ -708,7 +708,7 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> with Wi
         }
         
         return Semantics(
-          label: isListening ? 'Stop voice input' : 'Start voice input',
+          label: isListening ? 'Listening... (auto-stops after silence)' : 'Start voice input',
           button: true,
           child: SizedBox(
             width: 80,
@@ -786,7 +786,8 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> with Wi
           onResult: _onSpeechResult,
           onError: _onSpeechError,
           onComplete: _onSpeechComplete,
-          listenFor: const Duration(seconds: 60),
+          pauseFor: const Duration(milliseconds: 1800), // 1.8 seconds like modern platforms
+          listenFor: const Duration(seconds: 30), // Max listening time
         );
         
         if (!success) {
@@ -806,7 +807,8 @@ class _PromptToPageScreenState extends ConsumerState<PromptToPageScreen> with Wi
             onResult: _onSpeechResult,
             onError: _onSpeechError,
             onComplete: _onSpeechComplete,
-            listenFor: const Duration(seconds: 60),
+            pauseFor: const Duration(milliseconds: 1800), // 1.8 seconds like modern platforms
+            listenFor: const Duration(seconds: 30), // Max listening time
           );
           
           if (!success) {

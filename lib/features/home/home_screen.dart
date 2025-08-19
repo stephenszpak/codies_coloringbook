@@ -45,7 +45,7 @@ class HomeScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             
             BigButton(
-              text: 'New Coloring Page',
+              text: 'Create a coloring page from a photo',
               icon: Icons.add_photo_alternate,
               onPressed: () {
                 Navigator.of(context).pushNamed('/create-page');
@@ -55,7 +55,7 @@ class HomeScreen extends ConsumerWidget {
             const SizedBox(height: 16),
             
             BigButton(
-              text: 'Create your own coloring page!',
+              text: 'Create a custom coloring page',
               icon: Icons.text_fields,
               onPressed: settings.openAIEnabled
                   ? () {

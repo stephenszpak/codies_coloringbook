@@ -28,6 +28,7 @@ class SpeechService {
   bool _isInitialized = false;
   bool _isListening = false;
   String _lastResult = '';
+  Timer? _speechTimeoutTimer;
   ValueNotifier<SpeechListeningState> listeningState = ValueNotifier(SpeechListeningState.idle);
   
   // Callbacks
@@ -206,6 +207,7 @@ class SpeechService {
       await _speechToText.listen(
         onResult: _onSpeechResult,
         listenFor: listenFor,
+        pauseFor: pauseFor,
         partialResults: true,
         localeId: currentLocaleId,
         cancelOnError: true,
@@ -227,6 +229,7 @@ class SpeechService {
     try {
       await _speechToText.stop();
       _isListening = false;
+      _speechTimeoutTimer?.cancel();
       listeningState.value = SpeechListeningState.processing;
       
       // Brief delay to show processing state
@@ -245,6 +248,7 @@ class SpeechService {
     try {
       await _speechToText.cancel();
       _isListening = false;
+      _speechTimeoutTimer?.cancel();
       _lastResult = '';
       listeningState.value = SpeechListeningState.idle;
     } catch (e) {
@@ -255,13 +259,25 @@ class SpeechService {
   void _onSpeechResult(SpeechRecognitionResult result) {
     _lastResult = result.recognizedWords.trim();
     
-    // No automatic timeout - user must manually stop
     // Call result callback with partial results
     onResult?.call(_lastResult);
     
-    // If this is the final result (user stopped manually), complete listening
+    // If this is the final result, complete listening immediately
     if (result.finalResult) {
+      _speechTimeoutTimer?.cancel();
       _completeListening();
+    } else {
+      // For partial results, reset the timeout timer
+      // Modern platforms use 1.5-2 seconds after last speech
+      _speechTimeoutTimer?.cancel();
+      if (_isListening && _lastResult.isNotEmpty) {
+        _speechTimeoutTimer = Timer(const Duration(milliseconds: 1800), () {
+          if (_isListening) {
+            // Auto-stop after 1.8 seconds of silence
+            stopListening();
+          }
+        });
+      }
     }
   }
 
@@ -285,6 +301,7 @@ class SpeechService {
 
   void _handleError(String errorMessage) {
     _isListening = false;
+    _speechTimeoutTimer?.cancel();
     listeningState.value = SpeechListeningState.error;
     onError?.call(errorMessage);
     
@@ -296,12 +313,14 @@ class SpeechService {
 
   void _completeListening() {
     _isListening = false;
+    _speechTimeoutTimer?.cancel();
     listeningState.value = SpeechListeningState.idle;
     onComplete?.call();
   }
 
   /// Dispose resources
   void dispose() {
+    _speechTimeoutTimer?.cancel();
     listeningState.dispose();
   }
 }
