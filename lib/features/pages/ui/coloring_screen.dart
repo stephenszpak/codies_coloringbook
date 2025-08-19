@@ -14,6 +14,7 @@ import '../data/pages_repository.dart';
 import '../processing/flood_fill.dart';
 import 'color_palette.dart';
 import 'widgets/canvas_painter.dart';
+import 'widgets/zoomable_coloring_canvas.dart';
 
 class ColoringNotifier extends StateNotifier<ColoringState> {
   ColoringNotifier() : super(const ColoringState());
@@ -358,7 +359,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
           Expanded(
             child: Container(
               color: Colors.white,
-              child: ColoringCanvas(
+              child: ZoomableColoringCanvas(
                 colorLayer: state.colorLayer,
                 outlineLayer: state.outlineLayer,
                 strokes: state.strokes,
@@ -366,6 +367,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
                 onPanStart: notifier.startStroke,
                 onPanUpdate: notifier.updateStroke,
                 onPanEnd: notifier.endStroke,
+                config: ZoomConfig.adaptive(context),
               ),
             ),
           ),

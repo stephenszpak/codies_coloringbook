@@ -18,7 +18,13 @@ class CanvasPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (outlineLayer == null) return;
 
+    // For zoom compatibility, render at original image size
+    // The InteractiveViewer will handle scaling the entire canvas
+    final imageWidth = outlineLayer!.width.toDouble();
+    final imageHeight = outlineLayer!.height.toDouble();
+    
     // Use pixel-stable painting with no smoothing to preserve crisp line art
+    // Disable filtering to prevent blur during zoom operations
     final colorPaint = Paint()
       ..filterQuality = FilterQuality.none
       ..isAntiAlias = false;
@@ -28,55 +34,37 @@ class CanvasPainter extends CustomPainter {
       ..isAntiAlias = false
       ..blendMode = BlendMode.multiply; // Ensures black lines stay on top, white becomes transparent
 
-    final srcRect = Rect.fromLTWH(
-      0,
-      0,
-      outlineLayer!.width.toDouble(),
-      outlineLayer!.height.toDouble(),
-    );
-
-    final dstRect = _calculateDestinationRect(size, srcRect);
+    final imageRect = Rect.fromLTWH(0, 0, imageWidth, imageHeight);
 
     // PASS 1: Draw color layer (mutable, underneath)
     if (colorLayer != null) {
-      canvas.drawImageRect(colorLayer!, srcRect, dstRect, colorPaint);
+      canvas.drawImageRect(colorLayer!, imageRect, imageRect, colorPaint);
     }
 
     // PASS 2: Draw freehand strokes (above colors, below line art)
+    // Strokes are already in image coordinates, so draw them directly
     for (final stroke in strokes) {
-      final scaledStrokeWidth = (stroke.strokeWidth * (dstRect.width / srcRect.width)).clamp(2.0, 50.0);
       final strokePaint = Paint()
         ..color = stroke.color
-        ..strokeWidth = scaledStrokeWidth
+        ..strokeWidth = stroke.strokeWidth
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..filterQuality = FilterQuality.none
         ..isAntiAlias = true; // Allow antialiasing for smooth freehand strokes
       
-      // Convert stroke points from image coordinates to canvas coordinates
-      final canvasPoints = stroke.points.map((point) {
-        final relativeX = point.dx / srcRect.width;
-        final relativeY = point.dy / srcRect.height;
-        final canvasPoint = Offset(
-          dstRect.left + (relativeX * dstRect.width),
-          dstRect.top + (relativeY * dstRect.height),
-        );
-        return canvasPoint;
-      }).toList();
-      
-      if (canvasPoints.length < 2) {
-        canvas.drawPoints(ui.PointMode.points, canvasPoints, strokePaint);
+      if (stroke.points.length < 2) {
+        canvas.drawPoints(ui.PointMode.points, stroke.points, strokePaint);
       } else {
-        for (var i = 1; i < canvasPoints.length; i++) {
-          canvas.drawLine(canvasPoints[i - 1], canvasPoints[i], strokePaint);
+        for (var i = 1; i < stroke.points.length; i++) {
+          canvas.drawLine(stroke.points[i - 1], stroke.points[i], strokePaint);
         }
       }
     }
 
     // PASS 3: Draw line art layer (immutable, always on top)
     // Use multiply blend mode so black stays solid and white becomes transparent
-    canvas.drawImageRect(outlineLayer!, srcRect, dstRect, linePaint);
+    canvas.drawImageRect(outlineLayer!, imageRect, imageRect, linePaint);
   }
 
   Rect _calculateDestinationRect(Size canvasSize, Rect srcRect) {
@@ -102,24 +90,20 @@ class CanvasPainter extends CustomPainter {
   Offset? canvasToImageCoordinates(Offset canvasOffset, Size canvasSize) {
     if (outlineLayer == null) return null;
 
-    final srcRect = Rect.fromLTWH(
-      0,
-      0,
-      outlineLayer!.width.toDouble(),
-      outlineLayer!.height.toDouble(),
+    final imageWidth = outlineLayer!.width.toDouble();
+    final imageHeight = outlineLayer!.height.toDouble();
+
+    // With the zoom system, canvas coordinates should directly map to image coordinates
+    // since the canvas is rendered at original image size and InteractiveViewer handles scaling
+    if (canvasOffset.dx < 0 || canvasOffset.dx >= imageWidth ||
+        canvasOffset.dy < 0 || canvasOffset.dy >= imageHeight) {
+      return null;
+    }
+
+    return Offset(
+      canvasOffset.dx.clamp(0.0, imageWidth - 1),
+      canvasOffset.dy.clamp(0.0, imageHeight - 1),
     );
-
-    final dstRect = _calculateDestinationRect(canvasSize, srcRect);
-
-    if (!dstRect.contains(canvasOffset)) return null;
-
-    final relativeX = (canvasOffset.dx - dstRect.left) / dstRect.width;
-    final relativeY = (canvasOffset.dy - dstRect.top) / dstRect.height;
-
-    final imageX = (relativeX * srcRect.width).round();
-    final imageY = (relativeY * srcRect.height).round();
-
-    return Offset(imageX.toDouble(), imageY.toDouble());
   }
 
   @override

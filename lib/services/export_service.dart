@@ -15,6 +15,9 @@ import '../features/pages/data/coloring_page.dart';
 
 class ExportService {
   /// Exports the coloring page to PNG using the same two-layer rendering as canvas.
+  /// IMPORTANT: Export always renders at original image resolution, ignoring any 
+  /// zoom/pan transforms from the interactive view. This ensures consistent export
+  /// quality regardless of the current view state.
   static Future<Result<String>> exportToPNG(
     ui.Image colorLayer,
     ui.Image outlineLayer, {
