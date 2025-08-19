@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/haptics.dart';
+import '../../../../widgets/crayon_loader.dart';
 
 class BigButton extends StatelessWidget {
   final String text;
@@ -78,10 +79,13 @@ class BigButton extends StatelessWidget {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        icon,
-                        size: 28,
-                        color: foregroundColor ?? theme.colorScheme.primary,
+                      const SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CrayonLoader(
+                          size: 28,
+                          showMessage: false,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Text(

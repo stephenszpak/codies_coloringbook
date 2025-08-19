@@ -3,10 +3,12 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../../core/haptics.dart';
 import '../../../core/result.dart';
 import '../../../core/theme.dart';
 import '../../../services/export_service.dart';
+import '../../../widgets/crayon_loader.dart';
 import '../data/coloring_page.dart';
 import '../data/pages_repository.dart';
 import '../processing/flood_fill.dart';
@@ -45,7 +47,7 @@ class ColoringNotifier extends StateNotifier<ColoringState> {
   }
   /// Begin a new freehand stroke at the given image coordinate.
   void startStroke(Offset point) {
-    final color = state.isEraserSelected ? Colors.transparent : state.selectedColor;
+    final color = state.isEraserSelected ? Colors.white : state.selectedColor;
     final stroke = DrawStroke(
       points: [point],
       color: color,
@@ -64,9 +66,24 @@ class ColoringNotifier extends StateNotifier<ColoringState> {
     state = state.copyWith(strokes: updated);
   }
 
-  /// End the current freehand stroke.
+  /// End the current freehand stroke and create undo action.
   void endStroke() {
-    // No-op: strokes are retained in state.strokes
+    if (state.strokes.isNotEmpty) {
+      // Create undo action for stroke
+      final strokesBefore = List<DrawStroke>.from(state.strokes)..removeLast();
+      final strokesAfter = List<DrawStroke>.from(state.strokes);
+      
+      final undoAction = UndoRedoAction(
+        type: UndoActionType.stroke,
+        x: 0,
+        y: 0,
+        pixels: [],
+        strokesBefore: strokesBefore,
+        strokesAfter: strokesAfter,
+      );
+      
+      addUndoAction(undoAction);
+    }
   }
 
   void setLoading(bool loading) {
@@ -88,7 +105,20 @@ class ColoringNotifier extends StateNotifier<ColoringState> {
     state = state.copyWith(
       undoStack: newUndoStack,
       redoStack: [],
+      hasUnsavedChanges: true,
     );
+  }
+
+  void markPageSaved() {
+    state = state.copyWith(hasUnsavedChanges: false);
+  }
+
+  void clearAllStrokes() {
+    state = state.copyWith(strokes: []);
+  }
+
+  void setStrokes(List<DrawStroke> strokes) {
+    state = state.copyWith(strokes: strokes);
   }
 
   UndoRedoAction? popUndoAction() {
@@ -134,6 +164,7 @@ class ColoringState {
   final String? errorMessage;
   final double brushSize;
   final List<DrawStroke> strokes;
+  final bool hasUnsavedChanges;
 
   const ColoringState({
     this.page,
@@ -145,8 +176,9 @@ class ColoringState {
     this.redoStack = const [],
     this.isLoading = false,
     this.errorMessage,
-    this.brushSize = 4.0,
+    this.brushSize = 10.0,
     this.strokes = const [],
+    this.hasUnsavedChanges = false,
   });
 
   ColoringState copyWith({
@@ -161,6 +193,7 @@ class ColoringState {
     String? errorMessage,
     double? brushSize,
     List<DrawStroke>? strokes,
+    bool? hasUnsavedChanges,
   }) {
     return ColoringState(
       page: page ?? this.page,
@@ -174,6 +207,7 @@ class ColoringState {
       errorMessage: errorMessage ?? this.errorMessage,
       brushSize: brushSize ?? this.brushSize,
       strokes: strokes ?? this.strokes,
+      hasUnsavedChanges: hasUnsavedChanges ?? this.hasUnsavedChanges,
     );
   }
 }
@@ -195,22 +229,13 @@ class ColoringScreen extends ConsumerStatefulWidget {
 }
 
 class _ColoringScreenState extends ConsumerState<ColoringScreen> {
-  late TransformationController _transformationController;
-  bool _isZoomMode = false; // Toggle between zoom and draw modes
 
   @override
   void initState() {
     super.initState();
-    _transformationController = TransformationController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadColoringPage();
     });
-  }
-
-  @override
-  void dispose() {
-    _transformationController.dispose();
-    super.dispose();
   }
 
   @override
@@ -220,10 +245,8 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
     final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+      return const CrayonLoadingScreen(
+        message: 'Loading your coloring page...',
       );
     }
 
@@ -270,45 +293,24 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       );
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (!didPop) {
+          await _handleBackButton();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Coloring'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
             HapticsService.lightTap();
-            _saveProgress();
-            Navigator.of(context).pop();
+            _handleBackButton();
           },
         ),
         actions: [
-          IconButton(
-            icon: Icon(_isZoomMode ? Icons.edit : Icons.zoom_in),
-            onPressed: () {
-              setState(() {
-                _isZoomMode = !_isZoomMode;
-              });
-              HapticsService.selectionClick();
-            },
-            tooltip: _isZoomMode ? 'Draw Mode' : 'Zoom Mode',
-          ),
-          if (_isZoomMode) ...[
-            IconButton(
-              icon: const Icon(Icons.zoom_in),
-              onPressed: _zoomIn,
-              tooltip: 'Zoom In',
-            ),
-            IconButton(
-              icon: const Icon(Icons.zoom_out),
-              onPressed: _zoomOut,
-              tooltip: 'Zoom Out',
-            ),
-            IconButton(
-              icon: const Icon(Icons.center_focus_strong),
-              onPressed: _resetZoom,
-              tooltip: 'Reset Zoom',
-            ),
-          ],
           IconButton(
             icon: const Icon(Icons.undo),
             onPressed: state.undoStack.isNotEmpty ? _undo : null,
@@ -319,6 +321,11 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
             onPressed: state.redoStack.isNotEmpty ? _redo : null,
             tooltip: 'Redo',
           ),
+          IconButton(
+            icon: const Icon(Icons.clear_all, color: Colors.red),
+            onPressed: _showClearAllConfirmation,
+            tooltip: 'Clear All',
+          ),
           PopupMenuButton<String>(
             onSelected: _handleMenuAction,
             itemBuilder: (context) => [
@@ -326,19 +333,9 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
                 value: 'save_png',
                 child: Row(
                   children: [
-                    Icon(Icons.image),
+                    Icon(Icons.save_alt),
                     SizedBox(width: 8),
-                    Text('Export PNG'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'save_pdf',
-                child: Row(
-                  children: [
-                    Icon(Icons.picture_as_pdf),
-                    SizedBox(width: 8),
-                    Text('Export PDF'),
+                    Text('Save to Photos'),
                   ],
                 ),
               ),
@@ -361,31 +358,15 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
           Expanded(
             child: Container(
               color: Colors.white,
-              child: _isZoomMode
-                  ? InteractiveViewer(
-                      transformationController: _transformationController,
-                      minScale: 0.5,
-                      maxScale: 5.0,
-                      constrained: false,
-                      child: ColoringCanvas(
-                        colorLayer: state.colorLayer,
-                        outlineLayer: state.outlineLayer,
-                        strokes: state.strokes,
-                        onTap: _handleCanvasTap,
-                        onPanStart: null, // Disable drawing in zoom mode
-                        onPanUpdate: null,
-                        onPanEnd: null,
-                      ),
-                    )
-                  : ColoringCanvas(
-                      colorLayer: state.colorLayer,
-                      outlineLayer: state.outlineLayer,
-                      strokes: state.strokes,
-                      onTap: _handleCanvasTap,
-                      onPanStart: notifier.startStroke,
-                      onPanUpdate: notifier.updateStroke,
-                      onPanEnd: notifier.endStroke,
-                    ),
+              child: ColoringCanvas(
+                colorLayer: state.colorLayer,
+                outlineLayer: state.outlineLayer,
+                strokes: state.strokes,
+                onTap: _handleCanvasTap,
+                onPanStart: notifier.startStroke,
+                onPanUpdate: notifier.updateStroke,
+                onPanEnd: notifier.endStroke,
+              ),
             ),
           ),
           // Brush size selector
@@ -425,6 +406,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }
@@ -472,7 +454,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
       offset.dx.toInt(),
       offset.dy.toInt(),
       state.isEraserSelected 
-          ? Colors.transparent 
+          ? Colors.white 
           : state.selectedColor,
     );
   }
@@ -529,7 +511,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
     final action = notifier.popUndoAction();
     if (action != null) {
       HapticsService.mediumTap();
-      _applyUndoRedoAction(action);
+      _applyUndoRedoAction(action, isRedo: false);
     }
   }
 
@@ -542,40 +524,189 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
     final action = notifier.popRedoAction();
     if (action != null) {
       HapticsService.mediumTap();
-      _applyUndoRedoAction(action);
+      _applyUndoRedoAction(action, isRedo: true);
     }
   }
 
-  Future<void> _applyUndoRedoAction(UndoRedoAction action) async {
+  Future<void> _applyUndoRedoAction(UndoRedoAction action, {required bool isRedo}) async {
     final state = ref.read(coloringProvider(widget.pageId));
     final notifier = ref.read(coloringProvider(widget.pageId).notifier);
 
     if (state.page == null) return;
 
     try {
-      final currentBytes = await File(state.page!.workingImagePath).readAsBytes();
-      final result = FloodFillService.applyUndoAction(currentBytes, action);
+      switch (action.type) {
+        case UndoActionType.floodFill:
+          final currentBytes = await File(state.page!.workingImagePath).readAsBytes();
+          final result = FloodFillService.applyUndoAction(currentBytes, action);
 
-      if (result != null) {
-        await File(state.page!.workingImagePath).writeAsBytes(result);
-        
-        final newColorLayer = await decodeImageFromList(result);
-        notifier.setImages(newColorLayer, state.outlineLayer);
+          if (result != null) {
+            await File(state.page!.workingImagePath).writeAsBytes(result);
+            
+            final newColorLayer = await decodeImageFromList(result);
+            notifier.setImages(newColorLayer, state.outlineLayer);
+          }
+          
+          // Handle stroke restoration for "clear all" operations
+          if (action.strokesBefore != null && action.strokesAfter != null) {
+            if (isRedo) {
+              // Redo: restore "after" state (empty strokes for clear all)
+              notifier.setStrokes(action.strokesAfter!);
+            } else {
+              // Undo: restore "before" state (original strokes before clear all)
+              notifier.setStrokes(action.strokesBefore!);
+            }
+          }
+          break;
+          
+        case UndoActionType.stroke:
+          // For stroke operations, use "after" state for redo, "before" state for undo
+          if (isRedo && action.strokesAfter != null) {
+            notifier.setStrokes(action.strokesAfter!);
+          } else if (!isRedo && action.strokesBefore != null) {
+            notifier.setStrokes(action.strokesBefore!);
+          }
+          break;
       }
     } catch (e) {
       notifier.setError('Failed to undo/redo: ${e.toString()}');
     }
   }
 
-  Future<void> _saveProgress() async {
+  Future<void> _handleBackButton() async {
     final state = ref.read(coloringProvider(widget.pageId));
-    if (state.page == null) return;
+    
+    if (state.hasUnsavedChanges) {
+      _showSaveDialog();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _showSaveDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Save Your Coloring Page?'),
+          content: const Text('You have made changes to this coloring page. Would you like to save it to My Pages?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+                Navigator.of(context).pop(); // Exit coloring screen
+              },
+              child: const Text('Don\'t Save'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog only - stay in coloring screen
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+                _saveAndExit();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _saveAndExit() async {
+    final state = ref.read(coloringProvider(widget.pageId));
+    final notifier = ref.read(coloringProvider(widget.pageId).notifier);
+    
+    if (state.page == null) {
+      Navigator.of(context).pop();
+      return;
+    }
 
     try {
-      // Progress is automatically saved after each flood fill operation
-      // This method could be extended for additional cleanup or final saves
+      _showLoading('Saving your page...');
+      
+      // Save the current state to the working image file
+      await _finalizeColoringPage();
+      
+      // Mark as saved
+      notifier.markPageSaved();
+      
+      Navigator.of(context).pop(); // Close loading dialog
+      Navigator.of(context).pop(); // Exit coloring screen
+      
+      _showSuccess('Coloring page saved successfully!');
     } catch (e) {
-      // Ignore save errors when leaving
+      Navigator.of(context).pop(); // Close loading dialog
+      _showError('Failed to save: ${e.toString()}');
+    }
+  }
+
+  Future<void> _finalizeColoringPage() async {
+    final state = ref.read(coloringProvider(widget.pageId));
+    
+    if (state.page == null || state.colorLayer == null || state.outlineLayer == null) {
+      return;
+    }
+
+    try {
+      // If there are strokes, we need to render them into the color layer
+      if (state.strokes.isNotEmpty) {
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        
+        final colorPaint = Paint()
+          ..filterQuality = FilterQuality.none
+          ..isAntiAlias = false;
+
+        final srcRect = Rect.fromLTWH(
+          0,
+          0,
+          state.colorLayer!.width.toDouble(),
+          state.colorLayer!.height.toDouble(),
+        );
+
+        // Draw the current color layer
+        canvas.drawImageRect(state.colorLayer!, srcRect, srcRect, colorPaint);
+
+        // Draw all strokes on top
+        for (final stroke in state.strokes) {
+          final strokePaint = Paint()
+            ..color = stroke.color
+            ..strokeWidth = stroke.strokeWidth
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..filterQuality = FilterQuality.none
+            ..isAntiAlias = true;
+          
+          if (stroke.points.length < 2) {
+            canvas.drawPoints(ui.PointMode.points, stroke.points, strokePaint);
+          } else {
+            for (var i = 1; i < stroke.points.length; i++) {
+              canvas.drawLine(stroke.points[i - 1], stroke.points[i], strokePaint);
+            }
+          }
+        }
+
+        // Convert to image and save
+        final picture = recorder.endRecording();
+        final finalImage = await picture.toImage(
+          state.colorLayer!.width,
+          state.colorLayer!.height,
+        );
+        
+        final pngBytes = await finalImage.toByteData(format: ui.ImageByteFormat.png);
+        if (pngBytes != null) {
+          await File(state.page!.workingImagePath).writeAsBytes(pngBytes.buffer.asUint8List());
+        }
+      }
+    } catch (e) {
+      throw Exception('Failed to finalize coloring page: $e');
     }
   }
 
@@ -589,10 +720,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
 
     switch (action) {
       case 'save_png':
-        _exportPNG();
-        break;
-      case 'save_pdf':
-        _exportPDF();
+        _saveToPhotos();
         break;
       case 'share':
         _shareImage();
@@ -600,65 +728,47 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
     }
   }
 
-  Future<void> _exportPNG() async {
+  Future<void> _saveToPhotos() async {
     final state = ref.read(coloringProvider(widget.pageId));
     
     if (state.colorLayer == null || state.outlineLayer == null) return;
 
     try {
-      _showLoading('Exporting PNG...');
+      _showLoading('Saving to Photos...');
       
-      final result = await ExportService.exportToPNG(
+      // Let the ExportService handle all permission logic
+      final result = await ExportService.saveToPhotoLibrary(
         state.colorLayer!,
         state.outlineLayer!,
         strokes: state.strokes,
       );
 
-      Navigator.of(context).pop(); // Close loading dialog
+      // Close loading dialog first
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+
+      if (!mounted) return;
 
       result.fold(
-        onSuccess: (filePath) {
-          _showSuccess('PNG saved successfully!');
+        onSuccess: (_) {
+          _showSuccess('Saved to Photos successfully!');
         },
         onFailure: (error) {
-          _showError('Failed to export PNG: $error');
+          _showPermissionError(error);
         },
       );
     } catch (e) {
-      Navigator.of(context).pop();
-      _showError('Failed to export PNG: ${e.toString()}');
+      // Ensure loading dialog is closed even on exception
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+      if (mounted) {
+        _showError('Failed to save to Photos: ${e.toString()}');
+      }
     }
   }
 
-  Future<void> _exportPDF() async {
-    final state = ref.read(coloringProvider(widget.pageId));
-    
-    if (state.colorLayer == null || state.outlineLayer == null) return;
-
-    try {
-      _showLoading('Exporting PDF...');
-      
-      final result = await ExportService.exportToPDF(
-        state.colorLayer!,
-        state.outlineLayer!,
-        strokes: state.strokes,
-      );
-
-      Navigator.of(context).pop(); // Close loading dialog
-
-      result.fold(
-        onSuccess: (filePath) {
-          _showSuccess('PDF saved successfully!');
-        },
-        onFailure: (error) {
-          _showError('Failed to export PDF: $error');
-        },
-      );
-    } catch (e) {
-      Navigator.of(context).pop();
-      _showError('Failed to export PDF: ${e.toString()}');
-    }
-  }
 
   Future<void> _shareImage() async {
     final state = ref.read(coloringProvider(widget.pageId));
@@ -695,20 +805,7 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
   }
 
   void _showLoading(String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(width: 16),
-            Text(message),
-          ],
-        ),
-      ),
-    );
+    CrayonLoadingDialog.show(context, message);
   }
 
   void _showSuccess(String message) {
@@ -729,38 +826,160 @@ class _ColoringScreenState extends ConsumerState<ColoringScreen> {
     );
   }
 
-  void _zoomIn() {
-    final currentTransform = _transformationController.value;
-    final currentScale = currentTransform.getMaxScaleOnAxis();
-    const zoomFactor = 1.2;
-    final newScale = (currentScale * zoomFactor).clamp(0.5, 5.0);
-    
-    final scaleChange = newScale / currentScale;
-    final newTransform = Matrix4.identity()
-      ..scale(scaleChange, scaleChange, 1.0)
-      ..multiply(currentTransform);
-    
-    _transformationController.value = newTransform;
-    HapticsService.lightTap();
+  void _showPermissionError(String error) {
+    // Check if this is a permission-related error that needs special handling
+    if (error.contains('permanently denied') || error.contains('Settings >')) {
+      _showPermissionDialog(
+        title: 'Photo Library Access Needed',
+        message: error,
+        showSettingsButton: true,
+      );
+    } else if (error.contains('permission') || error.contains('access')) {
+      _showPermissionDialog(
+        title: 'Photo Library Access',
+        message: error,
+        showSettingsButton: false,
+      );
+    } else {
+      _showError('Failed to save to Photos: $error');
+    }
   }
 
-  void _zoomOut() {
-    final currentTransform = _transformationController.value;
-    final currentScale = currentTransform.getMaxScaleOnAxis();
-    const zoomFactor = 0.8;
-    final newScale = (currentScale * zoomFactor).clamp(0.5, 5.0);
-    
-    final scaleChange = newScale / currentScale;
-    final newTransform = Matrix4.identity()
-      ..scale(scaleChange, scaleChange, 1.0)
-      ..multiply(currentTransform);
-    
-    _transformationController.value = newTransform;
-    HapticsService.lightTap();
+  void _showPermissionDialog({
+    required String title,
+    required String message,
+    required bool showSettingsButton,
+  }) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            if (showSettingsButton)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+            if (!showSettingsButton)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  // Retry the save operation
+                  _saveToPhotos();
+                },
+                child: const Text('Try Again'),
+              ),
+          ],
+        );
+      },
+    );
   }
 
-  void _resetZoom() {
-    _transformationController.value = Matrix4.identity();
-    HapticsService.mediumTap();
+  Future<void> _openAppSettings() async {
+    try {
+      await openAppSettings();
+    } catch (e) {
+      _showError('Could not open settings. Please manually enable photo library access in Settings.');
+    }
+  }
+
+
+  void _showClearAllConfirmation() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Clear All'),
+          content: const Text(
+            'Are you sure you want to clear all coloring? This will remove all colors and strokes, but keep the original outline.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _clearAll();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Clear All'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _clearAll() async {
+    final state = ref.read(coloringProvider(widget.pageId));
+    final notifier = ref.read(coloringProvider(widget.pageId).notifier);
+    
+    if (state.page == null || state.outlineLayer == null) return;
+
+    try {
+      _showLoading('Clearing all coloring...');
+      
+      // Read current state before clearing for undo
+      final beforeBytes = await File(state.page!.workingImagePath).readAsBytes();
+      
+      // Create empty color layer with the same dimensions as the outline
+      final emptyColorBytes = FloodFillService.createEmptyColorLayer(
+        state.page!.width, 
+        state.page!.height,
+      );
+      
+      // Save the empty color layer to the working image file
+      await File(state.page!.workingImagePath).writeAsBytes(emptyColorBytes);
+      final undoAction = UndoRedoAction(
+        type: UndoActionType.floodFill,
+        x: 0,
+        y: 0,
+        pixels: beforeBytes,
+        strokesBefore: state.strokes,
+        strokesAfter: const [],
+      );
+      
+      // Update the state
+      final newColorLayer = await decodeImageFromList(emptyColorBytes);
+      notifier.setImages(newColorLayer, state.outlineLayer);
+      
+      // Clear all strokes
+      notifier.clearAllStrokes();
+      
+      // Add undo action
+      notifier.addUndoAction(undoAction);
+      
+      // Close loading dialog
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+      
+      if (mounted) {
+        _showSuccess('All coloring cleared!');
+      }
+      
+      HapticsService.mediumTap();
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+      if (mounted) {
+        _showError('Failed to clear coloring: ${e.toString()}');
+      }
+    }
   }
 }

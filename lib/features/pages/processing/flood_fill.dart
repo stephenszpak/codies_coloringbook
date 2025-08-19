@@ -138,7 +138,7 @@ class FloodFillService {
       img.Image? afterImage = img.decodeImage(afterBytes);
       
       if (beforeImage == null || afterImage == null) {
-        return UndoRedoAction(x: x, y: y, pixels: []);
+        return UndoRedoAction(type: UndoActionType.floodFill, x: x, y: y, pixels: []);
       }
       
       final List<int> changedPixels = [];
@@ -161,9 +161,9 @@ class FloodFillService {
         }
       }
       
-      return UndoRedoAction(x: x, y: y, pixels: changedPixels);
+      return UndoRedoAction(type: UndoActionType.floodFill, x: x, y: y, pixels: changedPixels);
     } catch (e) {
-      return UndoRedoAction(x: x, y: y, pixels: []);
+      return UndoRedoAction(type: UndoActionType.floodFill, x: x, y: y, pixels: []);
     }
   }
   
@@ -201,7 +201,8 @@ class FloodFillService {
       numChannels: 4,
     );
     
-    img.fill(image, color: img.ColorRgba8(255, 255, 255, 0));
+    // Fill with white pixels (matches background for proper undo functionality)
+    img.fill(image, color: img.ColorRgba8(255, 255, 255, 255));
     
     return Uint8List.fromList(img.encodePng(image));
   }

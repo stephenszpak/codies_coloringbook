@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui';
 
 class ColoringPage {
   final String id;
@@ -70,14 +71,34 @@ class ColoringPage {
   }
 }
 
+enum UndoActionType { floodFill, stroke }
+
 class UndoRedoAction {
+  final UndoActionType type;
   final int x;
   final int y;
   final List<int> pixels;
+  final List<DrawStroke>? strokesBefore;
+  final List<DrawStroke>? strokesAfter;
   
   const UndoRedoAction({
+    required this.type,
     required this.x,
     required this.y,
     required this.pixels,
+    this.strokesBefore,
+    this.strokesAfter,
+  });
+}
+
+class DrawStroke {
+  final List<Offset> points;
+  final Color color;
+  final double strokeWidth;
+
+  const DrawStroke({
+    required this.points,
+    required this.color,
+    required this.strokeWidth,
   });
 }

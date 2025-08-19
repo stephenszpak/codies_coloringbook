@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/haptics.dart';
 import '../../../core/result.dart';
+import '../../../widgets/crayon_loader.dart';
 import '../data/coloring_page.dart';
 import '../data/pages_repository.dart';
 
@@ -95,7 +96,12 @@ class MyPagesScreen extends ConsumerWidget {
             ),
           );
         },
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(
+          child: CrayonLoader(
+            message: 'Loading your coloring pages...',
+            size: 100,
+          ),
+        ),
         error: (error, stack) => Center(
           child: Padding(
             padding: const EdgeInsets.all(24.0),

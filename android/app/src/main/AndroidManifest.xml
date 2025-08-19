@@ -3,6 +3,9 @@
     <!-- Internet permission for OpenAI API -->
     <uses-permission android:name="android.permission.INTERNET" />
     
+    <!-- Microphone permission for speech recognition -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    
     <!-- Camera permissions -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />

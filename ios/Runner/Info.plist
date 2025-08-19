@@ -57,5 +57,13 @@
 	<!-- Camera Access -->
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs access to your camera to take photos that can be converted into coloring pages.</string>
+	
+	<!-- Microphone Access -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app needs access to your microphone so you can speak what you want to color instead of typing.</string>
+	
+	<!-- Speech Recognition -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app needs speech recognition to understand what you want to color when you use voice input.</string>
 </dict>
 </plist>

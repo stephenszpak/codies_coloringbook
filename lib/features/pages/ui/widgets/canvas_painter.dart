@@ -1,16 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-
-/// Represents a freehand drawing stroke composed of sequential points,
-/// with a given color and stroke width.
-class DrawStroke {
-  final List<Offset> points;
-  final Color color;
-  final double strokeWidth;
-
-  DrawStroke({required this.points, required this.color, required this.strokeWidth});
-}
+import '../../data/coloring_page.dart';
 
 class CanvasPainter extends CustomPainter {
   final ui.Image? colorLayer;
@@ -27,8 +18,15 @@ class CanvasPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (outlineLayer == null) return;
 
-    final paint = Paint()
-      ..filterQuality = FilterQuality.high;
+    // Use pixel-stable painting with no smoothing to preserve crisp line art
+    final colorPaint = Paint()
+      ..filterQuality = FilterQuality.none
+      ..isAntiAlias = false;
+
+    final linePaint = Paint()
+      ..filterQuality = FilterQuality.none
+      ..isAntiAlias = false
+      ..blendMode = BlendMode.multiply; // Ensures black lines stay on top, white becomes transparent
 
     final srcRect = Rect.fromLTWH(
       0,
@@ -39,22 +37,22 @@ class CanvasPainter extends CustomPainter {
 
     final dstRect = _calculateDestinationRect(size, srcRect);
 
+    // PASS 1: Draw color layer (mutable, underneath)
     if (colorLayer != null) {
-      canvas.drawImageRect(colorLayer!, srcRect, dstRect, paint);
+      canvas.drawImageRect(colorLayer!, srcRect, dstRect, colorPaint);
     }
 
-    // Draw the outline layer
-    canvas.drawImageRect(outlineLayer!, srcRect, dstRect, paint);
-
-    // Draw freehand strokes ON TOP of everything
+    // PASS 2: Draw freehand strokes (above colors, below line art)
     for (final stroke in strokes) {
-      final scaledStrokeWidth = (stroke.strokeWidth * (dstRect.width / srcRect.width)).clamp(2.0, 50.0); // Ensure minimum visible width
+      final scaledStrokeWidth = (stroke.strokeWidth * (dstRect.width / srcRect.width)).clamp(2.0, 50.0);
       final strokePaint = Paint()
         ..color = stroke.color
         ..strokeWidth = scaledStrokeWidth
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
+        ..strokeJoin = StrokeJoin.round
+        ..filterQuality = FilterQuality.none
+        ..isAntiAlias = true; // Allow antialiasing for smooth freehand strokes
       
       // Convert stroke points from image coordinates to canvas coordinates
       final canvasPoints = stroke.points.map((point) {
@@ -75,6 +73,10 @@ class CanvasPainter extends CustomPainter {
         }
       }
     }
+
+    // PASS 3: Draw line art layer (immutable, always on top)
+    // Use multiply blend mode so black stays solid and white becomes transparent
+    canvas.drawImageRect(outlineLayer!, srcRect, dstRect, linePaint);
   }
 
   Rect _calculateDestinationRect(Size canvasSize, Rect srcRect) {
