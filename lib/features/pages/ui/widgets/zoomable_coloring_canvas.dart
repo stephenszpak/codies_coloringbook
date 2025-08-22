@@ -128,6 +128,10 @@ class _ZoomableColoringCanvasState extends State<ZoomableColoringCanvas>
         oldWidget.outlineLayer != widget.outlineLayer ||
         oldWidget.strokes != widget.strokes) {
       _updatePainter();
+      // Reinitialize transform when image changes
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _initializeTransform();
+      });
     }
     if (oldWidget.config != widget.config) {
       _config = widget.config ?? ZoomConfig.adaptive(context);
@@ -161,12 +165,21 @@ class _ZoomableColoringCanvasState extends State<ZoomableColoringCanvas>
     final imageAspectRatio = imageWidth / imageHeight;
     final canvasAspectRatio = canvasSize.width / canvasSize.height;
     
-    // Scale to fit the image within the canvas (same logic as CanvasPainter)
-    if (imageAspectRatio > canvasAspectRatio) {
-      return canvasSize.width / imageWidth;
+    // Add padding to ensure the whole image is visible with margin
+    const padding = 20.0; // pixels of padding around the image
+    final availableWidth = canvasSize.width - (padding * 2);
+    final availableHeight = canvasSize.height - (padding * 2);
+    
+    // Scale to fit the image within the available canvas space with padding
+    double scale;
+    if (imageAspectRatio > (availableWidth / availableHeight)) {
+      scale = availableWidth / imageWidth;
     } else {
-      return canvasSize.height / imageHeight;
+      scale = availableHeight / imageHeight;
     }
+    
+    // Ensure we don't scale up tiny images too much, cap at 1.0
+    return math.min(scale, 1.0);
   }
   
   /// Get the image bounds in canvas coordinates at the current transform
@@ -498,10 +511,13 @@ class _ZoomableColoringCanvasState extends State<ZoomableColoringCanvas>
                   }
                 },
                 onInteractionEnd: _handlePanEnd,
-                minScale: 0.1, // Will be overridden by our clamp logic
-                maxScale: 10.0, // Will be overridden by our clamp logic
+                minScale: 0.01, // Very small minimum to allow our clamping to take control
+                maxScale: 20.0, // Large maximum to allow our clamping to take control  
                 boundaryMargin: const EdgeInsets.all(0),
-                constrained: false,
+                constrained: true, // Use constraints to help with sizing
+                scaleEnabled: true,
+                panEnabled: true,
+                clipBehavior: Clip.none, // Don't clip to allow full image visibility
                 child: RepaintBoundary(
                   child: CustomPaint(
                     painter: _painter,

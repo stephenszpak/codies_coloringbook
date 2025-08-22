@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import '../core/result.dart';
 import '../config/api_config.dart';
 import '../features/pages/ui/create_page_screen.dart';
+import 'subject_masking.dart';
 
 class OpenAIBackend {
   static const String _baseUrl = 'https://api.openai.com/v1';
@@ -23,6 +24,8 @@ class OpenAIBackend {
     Uint8List imageBytes, 
     int outlineStrength, {
     ArtStyle artStyle = ArtStyle.cartoon,
+    bool useCharacterizer = false,
+    double backgroundDetail = 0.2,
   }) async {
     try {
       final apiKey = _getApiKey();
@@ -33,6 +36,11 @@ class OpenAIBackend {
       // Handle exact trace mode with local edge detection
       if (artStyle == ArtStyle.exactTrace) {
         return await _processExactTrace(imageBytes);
+      }
+
+      // Handle characterizer mode with two-pass composition
+      if (useCharacterizer) {
+        return await _processCharacterizer(imageBytes, artStyle, backgroundDetail);
       }
 
       // For other modes, use AI processing
@@ -496,6 +504,283 @@ class OpenAIBackend {
     
     return (-1 * pixels[0] + -2 * pixels[1] + -1 * pixels[2] +
             1 * pixels[6] + 2 * pixels[7] + 1 * pixels[8]).toDouble();
+  }
+
+  /// Process characterizer mode with two-pass composition
+  Future<Result<Uint8List>> _processCharacterizer(
+      Uint8List imageBytes, ArtStyle artStyle, double backgroundDetail) async {
+    try {
+      // Step 1: Generate subject mask
+      final maskBytes = SubjectMaskingService.generateSubjectMask(imageBytes);
+      
+      // Step 2: Get subject bounding box
+      final subjectBbox = SubjectMaskingService.getSubjectBoundingBox(maskBytes);
+      
+      // Step 3: Background pass - generate simplified background line art
+      final backgroundResult = await _generateBackgroundLineArt(imageBytes, artStyle, backgroundDetail);
+      if (backgroundResult.isFailure) return backgroundResult;
+      
+      // Step 4: Subject pass - crop and generate high-fidelity subject line art
+      final subjectCropBytes = SubjectMaskingService.cropToSubject(imageBytes, subjectBbox);
+      final subjectResult = await _generateSubjectLineArt(subjectCropBytes, artStyle);
+      if (subjectResult.isFailure) return subjectResult;
+      
+      // Step 5: Composite subject over background using mask
+      final compositeBytes = SubjectMaskingService.compositeLineArt(
+          backgroundResult.dataOrNull!, 
+          subjectResult.dataOrNull!, 
+          maskBytes, 
+          subjectBbox);
+      
+      // Step 6: Post-process the composite result
+      final finalBytes = await _postProcessCharacterizer(compositeBytes, maskBytes, backgroundDetail);
+      
+      return Success(finalBytes);
+    } catch (e) {
+      return Failure('Characterizer processing failed: ${e.toString()}');
+    }
+  }
+  
+  /// Generate background line art with simplification
+  Future<Result<Uint8List>> _generateBackgroundLineArt(
+      Uint8List imageBytes, ArtStyle artStyle, double backgroundDetail) async {
+    
+    final base64Image = base64.encode(imageBytes);
+    
+    // Get vision description for background
+    final visionResponse = await _dio.post(
+      '$_baseUrl/chat/completions',
+      data: {
+        'model': 'gpt-4o-mini',
+        'messages': [
+          {
+            'role': 'user',
+            'content': [
+              {
+                'type': 'text',
+                'text': _getBackgroundVisionPrompt(artStyle, backgroundDetail)
+              },
+              {
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:image/png;base64,$base64Image'
+                }
+              }
+            ]
+          }
+        ],
+        'max_tokens': 200
+      },
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer ${_getApiKey()}',
+          'Content-Type': 'application/json',
+        },
+      ),
+    );
+
+    if (visionResponse.statusCode != 200) {
+      return Failure('Background vision API error: ${visionResponse.statusCode}');
+    }
+
+    final description = visionResponse.data['choices'][0]['message']['content'] as String;
+    final prompt = _getBackgroundLineArtPrompt(description, artStyle, backgroundDetail);
+    
+    return await _generateImageFromPrompt(prompt);
+  }
+  
+  /// Generate subject line art with high fidelity
+  Future<Result<Uint8List>> _generateSubjectLineArt(
+      Uint8List subjectCropBytes, ArtStyle artStyle) async {
+    
+    // For exact trace, use local processing on subject crop
+    if (artStyle == ArtStyle.exactTrace) {
+      return await _processExactTrace(subjectCropBytes);
+    }
+    
+    final base64Image = base64.encode(subjectCropBytes);
+    
+    // Get vision description for subject
+    final visionResponse = await _dio.post(
+      '$_baseUrl/chat/completions',
+      data: {
+        'model': 'gpt-4o-mini',
+        'messages': [
+          {
+            'role': 'user',
+            'content': [
+              {
+                'type': 'text',
+                'text': _getSubjectVisionPrompt(artStyle)
+              },
+              {
+                'type': 'image_url',
+                'image_url': {
+                  'url': 'data:image/png;base64,$base64Image'
+                }
+              }
+            ]
+          }
+        ],
+        'max_tokens': 200
+      },
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer ${_getApiKey()}',
+          'Content-Type': 'application/json',
+        },
+      ),
+    );
+
+    if (visionResponse.statusCode != 200) {
+      return Failure('Subject vision API error: ${visionResponse.statusCode}');
+    }
+
+    final description = visionResponse.data['choices'][0]['message']['content'] as String;
+    final prompt = _getSubjectLineArtPrompt(description, artStyle);
+    
+    return await _generateImageFromPrompt(prompt);
+  }
+  
+  /// Post-process the composite with different morphology for subject vs background
+  Future<Uint8List> _postProcessCharacterizer(
+      Uint8List compositeBytes, Uint8List maskBytes, double backgroundDetail) async {
+    try {
+      final composite = img.decodeImage(compositeBytes);
+      final mask = img.decodeImage(maskBytes);
+      if (composite == null || mask == null) return compositeBytes;
+      
+      // Resize composite to match processing size
+      final processedComposite = img.copyResize(composite, width: 2048, height: 2048);
+      final processedMask = img.copyResize(mask, width: 2048, height: 2048);
+      
+      // Apply different post-processing to subject vs background regions
+      final result = img.Image(
+        width: processedComposite.width,
+        height: processedComposite.height,
+        numChannels: processedComposite.numChannels,
+      );
+      
+      for (int y = 0; y < processedComposite.height; y++) {
+        for (int x = 0; x < processedComposite.width; x++) {
+          final maskPixel = processedMask.getPixel(x, y);
+          final isSubject = img.getLuminance(maskPixel) > 128;
+          
+          final compositePixel = processedComposite.getPixel(x, y);
+          final luminance = img.getLuminance(compositePixel);
+          
+          // Different thresholds for subject vs background
+          final threshold = isSubject ? 70 : (80 + (backgroundDetail * 40)); // Subject preserves more detail
+          
+          final newPixel = luminance < threshold
+              ? img.ColorRgb8(0, 0, 0)
+              : img.ColorRgb8(255, 255, 255);
+          
+          result.setPixel(x, y, newPixel);
+        }
+      }
+      
+      // Apply different morphological operations
+      final cleanedResult = _morphologicalCleanCharacterizer(result, processedMask, backgroundDetail);
+      
+      return Uint8List.fromList(img.encodePng(cleanedResult));
+    } catch (e) {
+      return compositeBytes;
+    }
+  }
+  
+  /// Apply morphological operations with different strength for subject vs background
+  img.Image _morphologicalCleanCharacterizer(img.Image image, img.Image mask, double backgroundDetail) {
+    // For subjects, apply minimal morphology to preserve detail
+    // For background, apply stronger morphology based on backgroundDetail setting
+    
+    final result = img.Image(
+      width: image.width,
+      height: image.height,
+      numChannels: image.numChannels,
+    );
+    
+    // Copy original
+    for (int y = 0; y < image.height; y++) {
+      for (int x = 0; x < image.width; x++) {
+        result.setPixel(x, y, image.getPixel(x, y));
+      }
+    }
+    
+    // Apply region-specific morphology
+    final backgroundMorphStrength = (1.0 - backgroundDetail * 0.7).clamp(0.3, 1.0);
+    
+    if (backgroundMorphStrength > 0.5) {
+      // Apply stronger morphology to background regions
+      for (int y = 1; y < image.height - 1; y++) {
+        for (int x = 1; x < image.width - 1; x++) {
+          final maskPixel = mask.getPixel(x, y);
+          final isSubject = img.getLuminance(maskPixel) > 128;
+          
+          if (!isSubject) { // Background region
+            final pixel = image.getPixel(x, y);
+            final luminance = img.getLuminance(pixel);
+            
+            if (luminance < 128) { // Black pixel (line)
+              // Apply dilation to thicken background lines
+              for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                  final nx = x + dx;
+                  final ny = y + dy;
+                  if (nx >= 0 && nx < image.width && ny >= 0 && ny < image.height) {
+                    final neighborMask = mask.getPixel(nx, ny);
+                    final neighborIsSubject = img.getLuminance(neighborMask) > 128;
+                    
+                    if (!neighborIsSubject) { // Only dilate within background
+                      result.setPixel(nx, ny, img.ColorRgb8(0, 0, 0));
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  // Vision prompts for characterizer
+  
+  String _getBackgroundVisionPrompt(ArtStyle artStyle, double backgroundDetail) {
+    final detailLevel = backgroundDetail > 0.7 ? 'detailed' : 
+                       backgroundDetail > 0.3 ? 'moderate' : 'minimal';
+    
+    return 'Focus only on the BACKGROUND elements of this image, ignoring the main subject/person/animal. '
+           'Describe background objects, scenery, setting, and environment in $detailLevel detail for creating '
+           'simplified background line art. Include large shapes, architectural elements, landscape features, '
+           'but minimize small textures and clutter. Describe what should be simplified or removed entirely.';
+  }
+  
+  String _getSubjectVisionPrompt(ArtStyle artStyle) {
+    return 'Focus only on the MAIN SUBJECT (person, animal, or central object) in this image, ignoring the background. '
+           'Describe the subject\'s exact silhouette, proportions, facial features, pose, clothing details, and '
+           'important characteristics that must be preserved in high-fidelity line art. Be precise about contours, '
+           'anatomy, and distinctive features that define the subject\'s identity and likeness.';
+  }
+  
+  String _getBackgroundLineArtPrompt(String description, ArtStyle artStyle, double backgroundDetail) {
+    final simplificationLevel = backgroundDetail > 0.7 ? 'moderate simplification' : 
+                                backgroundDetail > 0.3 ? 'significant simplification' : 'minimal detail, maximum simplification';
+    
+    return 'Create background line art with $simplificationLevel based on: $description. '
+           'IMPORTANT: Pure black outlines on white background only. No main subject - just background elements. '
+           'Large, simple shapes for background objects. Remove small textures and clutter. '
+           'Use continuous black lines with closed regions suitable for coloring. No shading, no gray areas.';
+  }
+  
+  String _getSubjectLineArtPrompt(String description, ArtStyle artStyle) {
+    return 'Create high-fidelity line art preserving exact subject likeness based on: $description. '
+           'CRITICAL: Preserve exact silhouette, proportions, and fine contours of the subject. '
+           'Thin-to-medium continuous black lines on pure white background. Capture all important '
+           'facial features, anatomical details, and distinctive characteristics. No background elements. '
+           'Maintain subject identity and recognizable features with precise line work and closed regions.';
   }
 
 }

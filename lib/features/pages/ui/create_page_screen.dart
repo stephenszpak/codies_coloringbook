@@ -67,6 +67,14 @@ class CreatePageNotifier extends StateNotifier<CreatePageState> {
   void unlockAdvancedMode() {
     state = state.copyWith(isAdvancedModeUnlocked: true);
   }
+
+  void setUseCharacterizer(bool useCharacterizer) {
+    state = state.copyWith(useCharacterizer: useCharacterizer);
+  }
+
+  void setBackgroundDetail(double backgroundDetail) {
+    state = state.copyWith(backgroundDetail: backgroundDetail);
+  }
 }
 
 class CreatePageState {
@@ -80,6 +88,8 @@ class CreatePageState {
   final bool isProcessing;
   final String? errorMessage;
   final bool isAdvancedModeUnlocked;
+  final bool useCharacterizer;
+  final double backgroundDetail;
 
   const CreatePageState({
     this.mode = CreatePageMode.photo,
@@ -92,6 +102,8 @@ class CreatePageState {
     this.isProcessing = false,
     this.errorMessage,
     this.isAdvancedModeUnlocked = false,
+    this.useCharacterizer = false,
+    this.backgroundDetail = 0.2, // Default to Low
   });
 
   CreatePageState copyWith({
@@ -105,6 +117,8 @@ class CreatePageState {
     bool? isProcessing,
     String? errorMessage,
     bool? isAdvancedModeUnlocked,
+    bool? useCharacterizer,
+    double? backgroundDetail,
   }) {
     return CreatePageState(
       mode: mode ?? this.mode,
@@ -117,6 +131,8 @@ class CreatePageState {
       isProcessing: isProcessing ?? this.isProcessing,
       errorMessage: errorMessage ?? this.errorMessage,
       isAdvancedModeUnlocked: isAdvancedModeUnlocked ?? this.isAdvancedModeUnlocked,
+      useCharacterizer: useCharacterizer ?? this.useCharacterizer,
+      backgroundDetail: backgroundDetail ?? this.backgroundDetail,
     );
   }
 }
@@ -313,6 +329,8 @@ class _CreatePageScreenState extends ConsumerState<CreatePageScreen> {
                       ),
                       const SizedBox(height: 20),
                       _buildSimplePreview(),
+                      const SizedBox(height: 20),
+                      _buildCharacterizerControls(),
                       const Spacer(),
                     ],
                     
@@ -373,6 +391,117 @@ class _CreatePageScreenState extends ConsumerState<CreatePageScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCharacterizerControls() {
+    final state = ref.watch(createPageProvider);
+    final theme = Theme.of(context);
+    
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blue.shade200, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.shade100,
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Toggle Row
+          Row(
+            children: [
+              Icon(
+                Icons.auto_fix_high,
+                color: Colors.blue.shade600,
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Keep Subject, Simplify Background',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              Switch.adaptive(
+                value: state.useCharacterizer,
+                onChanged: (value) {
+                  HapticsService.lightTap();
+                  ref.read(createPageProvider.notifier).setUseCharacterizer(value);
+                },
+                activeColor: Colors.blue.shade600,
+              ),
+            ],
+          ),
+          
+          // Background Detail Slider (shown when toggle is on)
+          if (state.useCharacterizer) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Icon(
+                  Icons.landscape,
+                  color: Colors.blue.shade600,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Background Detail',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blue.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  'Low',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.blue.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: state.backgroundDetail,
+                    min: 0.0,
+                    max: 1.0,
+                    divisions: 10,
+                    activeColor: Colors.blue.shade600,
+                    inactiveColor: Colors.blue.shade200,
+                    onChanged: (value) {
+                      ref.read(createPageProvider.notifier).setBackgroundDetail(value);
+                    },
+                  ),
+                ),
+                Text(
+                  'High',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.blue.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -718,6 +847,8 @@ class _CreatePageScreenState extends ConsumerState<CreatePageScreen> {
           state.sourceImageBytes!,
           state.outlineStrength,
           artStyle: state.artStyle,
+          useCharacterizer: state.useCharacterizer,
+          backgroundDetail: state.backgroundDetail,
         );
         
         if (!mounted) return;
